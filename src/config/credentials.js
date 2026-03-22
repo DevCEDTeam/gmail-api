@@ -135,8 +135,16 @@ async function getAccessToken(profileName = 'director') {
   return token;
 }
 
+/**
+ * Resolve DuoCircle SMTP password from Secret Manager or env var.
+ */
+async function getDuoCirclePassword() {
+  return resolveSecret('duocircle-smtp-password', 'DUOCIRCLE_PASS');
+}
+
 module.exports = {
   PROFILES,
   getOAuthClient,
   getAccessToken,
+  getDuoCirclePassword,
 };

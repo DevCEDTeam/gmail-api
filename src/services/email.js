@@ -11,7 +11,7 @@
 
 const nodemailer = require('nodemailer');
 const { v4: uuidv4 } = require('uuid');
-const { getOAuthClient } = require('../config/credentials');
+const { getOAuthClient, getDuoCirclePassword } = require('../config/credentials');
 const db = require('./database');
 
 const MAUTIC_BASE_URL = process.env.MAUTIC_BASE_URL || 'https://mautic.cfored.com';
@@ -24,9 +24,29 @@ const TRACKING_PIXEL = Buffer.from(
 );
 
 /**
- * Build a Nodemailer transport for the given profile.
+ * Build a Nodemailer transport for DuoCircle SMTP relay.
  */
-async function createTransport(profileName = 'director') {
+async function createDuoCircleTransport() {
+  const password = await getDuoCirclePassword();
+  if (!password) {
+    throw new Error('DuoCircle password not configured. Set DUOCIRCLE_PASS or add duocircle-smtp-password to Secret Manager.');
+  }
+
+  return nodemailer.createTransport({
+    host: process.env.DUOCIRCLE_HOST || 'smtp.duocircle.com',
+    port: parseInt(process.env.DUOCIRCLE_PORT || '587', 10),
+    secure: process.env.DUOCIRCLE_SECURE === 'true',
+    auth: {
+      user: process.env.DUOCIRCLE_USER,
+      pass: password,
+    },
+  });
+}
+
+/**
+ * Build a Nodemailer transport for Gmail OAuth2.
+ */
+async function createGmailTransport(profileName = 'director') {
   const creds = await getOAuthClient(profileName);
   const { token } = await creds.oAuth2Client.getAccessToken();
 
@@ -41,6 +61,17 @@ async function createTransport(profileName = 'director') {
       accessToken: token,
     },
   });
+}
+
+/**
+ * Build a Nodemailer transport for the given profile.
+ * Switches between Gmail OAuth2 and DuoCircle based on EMAIL_TRANSPORT env var.
+ */
+async function createTransport(profileName = 'director') {
+  if (process.env.EMAIL_TRANSPORT === 'duocircle') {
+    return createDuoCircleTransport();
+  }
+  return createGmailTransport(profileName);
 }
 
 /**
@@ -97,11 +128,25 @@ async function sendEmail({ to, subject, text, html, profile = 'director', queueI
 
   // 4. Build transport
   const transport = await createTransport(profile);
-  const creds = await getOAuthClient(profile);
 
-  // 5. Compose mail with unsubscribe headers
+  // 5. Resolve sender identity
+  let fromAddress;
+  if (process.env.EMAIL_TRANSPORT === 'duocircle') {
+    const profileMap = {
+      general: { email: process.env.GENERAL_SENDER_EMAIL, name: process.env.GENERAL_SENDER_NAME },
+      director: { email: process.env.DIRECTOR_SENDER_EMAIL, name: process.env.DIRECTOR_SENDER_NAME },
+      team: { email: process.env.TEAM_SENDER_EMAIL, name: process.env.TEAM_SENDER_NAME },
+    };
+    const sender = profileMap[profile] || profileMap.director;
+    fromAddress = `${sender.name || sender.email} <${sender.email}>`;
+  } else {
+    const creds = await getOAuthClient(profile);
+    fromAddress = `${creds.senderName} <${creds.senderEmail}>`;
+  }
+
+  // 6. Compose mail with unsubscribe headers
   const mailOptions = {
-    from: `${creds.senderName} <${creds.senderEmail}>`,
+    from: fromAddress,
     to,
     subject,
     text: text || '',
@@ -109,23 +154,24 @@ async function sendEmail({ to, subject, text, html, profile = 'director', queueI
     headers: unsubscribeHeaders(to, trackingId),
   };
 
-  // 6. Send
+  // 7. Send
   const result = await transport.sendMail(mailOptions);
 
-  // 7. Record delivery in Firebase
+  // 8. Record delivery in Firebase
+  const transportType = process.env.EMAIL_TRANSPORT || 'gmail';
   await db.recordDelivery({
     trackingId,
     to,
     subject,
-    from: creds.senderEmail,
+    from: fromAddress,
     profile,
     status: 'delivered',
     messageId: result.messageId,
-    sentVia: profile === 'general' ? 'docker-relay' : 'gmail-api',
+    sentVia: transportType === 'duocircle' ? 'duocircle' : (profile === 'general' ? 'docker-relay' : 'gmail-api'),
     queueId: queueId || null,
   });
 
-  // 8. Update queue item if applicable
+  // 9. Update queue item if applicable
   if (queueId) {
     await db.updateQueueItem(queueId, {
       status: 'sent',
