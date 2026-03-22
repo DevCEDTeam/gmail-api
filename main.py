@@ -2,7 +2,9 @@
 """Research sync tool for Claude Code hook system analysis."""
 
 import argparse
+import asyncio
 import json
+import os
 import textwrap
 from datetime import datetime
 
@@ -137,6 +139,92 @@ def sync_query(query: str) -> dict:
     return results
 
 
+async def async_query(query: str) -> dict:
+    """Process a query in async mode, simulating concurrent lookups."""
+    query_lower = query.lower()
+
+    async def lookup_hooks():
+        """Look up hook system knowledge."""
+        await asyncio.sleep(0.1)  # Simulate async I/O
+        if "hook" in query_lower:
+            return KNOWLEDGE_BASE["hook_system"]
+        return None
+
+    async def lookup_notebooklm():
+        """Look up NotebookLM integration knowledge."""
+        await asyncio.sleep(0.1)  # Simulate async I/O
+        if "notebooklm" in query_lower or "notebook" in query_lower:
+            return KNOWLEDGE_BASE["notebooklm_integration"]
+        return None
+
+    hook_result, nb_result = await asyncio.gather(
+        lookup_hooks(), lookup_notebooklm()
+    )
+
+    results = {
+        "query": query,
+        "mode": "async",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "findings": [],
+        "synthesis": "",
+    }
+
+    if hook_result:
+        results["findings"].append({
+            "topic": hook_result["title"],
+            "description": hook_result["description"],
+            "hook_types": hook_result["hook_types"],
+            "metadata_exchange": hook_result["metadata_exchange"],
+        })
+
+    if nb_result:
+        results["findings"].append({
+            "topic": nb_result["title"],
+            "description": nb_result["description"],
+            "integration_steps": nb_result["how_it_works"],
+            "metadata_types": nb_result["metadata_types"],
+        })
+
+    if "two-way" in query_lower or "metadata" in query_lower or "exchange" in query_lower:
+        results["synthesis"] = (
+            "Claude Code's hook system enables two-way metadata exchange with "
+            "NotebookLM through its event-driven architecture. "
+            "Hooks receive structured JSON on stdin (containing tool names, "
+            "parameters, and session context) and return JSON on stdout "
+            "(with directives to block, allow, or augment behavior). "
+            "This bidirectional JSON pipeline can bridge to NotebookLM by: "
+            "(a) exporting code session artifacts as NotebookLM sources via "
+            "PostToolUse hooks, and (b) importing NotebookLM research context "
+            "into Claude Code sessions via PreToolUse/SessionStart hooks. "
+            "The result is a continuous sync loop where coding insights feed "
+            "research notes and research context informs coding decisions."
+        )
+
+    if not results["findings"]:
+        results["findings"].append({
+            "topic": "No direct match",
+            "description": f"No specific knowledge base entry matched: {query}",
+        })
+        results["synthesis"] = "Query did not match known topics. Try refining your search."
+
+    return results
+
+
+def export_results(query: str, output_path: str = None) -> str:
+    """Export query results to a JSON file."""
+    results = sync_query(query)
+    results["mode"] = "export"
+
+    if output_path is None:
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        output_path = f"export_{timestamp}.json"
+
+    with open(output_path, "w") as f:
+        json.dump(results, f, indent=2)
+
+    return output_path
+
+
 def print_results(results: dict) -> None:
     """Print formatted results to the console."""
     try:
@@ -221,6 +309,11 @@ def main():
         default="rich",
         help="Output format (default: rich)",
     )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="Output file path for export mode",
+    )
 
     args = parser.parse_args()
 
@@ -233,8 +326,15 @@ def main():
             print(json.dumps(results, indent=2))
         else:
             print_results(results)
-    else:
-        print(f"Mode '{args.mode}' is not yet implemented.")
+    elif args.mode == "async":
+        results = asyncio.run(async_query(args.query))
+        if args.format == "json":
+            print(json.dumps(results, indent=2))
+        else:
+            print_results(results)
+    elif args.mode == "export":
+        output_path = export_results(args.query, args.output)
+        print(f"Results exported to: {output_path}")
 
 
 if __name__ == "__main__":
