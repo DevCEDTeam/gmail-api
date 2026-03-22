@@ -439,7 +439,184 @@ curl -X POST https://gmail-relay-xxxxx-uc.a.run.app/relay/bulk \
 
 ---
 
-## Step 10: Install on a GCE VM (Alternative to Cloud Run)
+## Step 10: DuoCircle SMTP Relay (Alternative Transport)
+
+If you hit Gmail API sending limits (2,000/day per workspace user) or want a dedicated SMTP relay for higher volume, [DuoCircle](https://www.duocircle.com/) is a plug-in alternative. Emails still flow through the Blue Truck API, but the transport switches from Gmail OAuth2 to DuoCircle SMTP.
+
+### 10a. Create a DuoCircle account
+
+1. Sign up at [duocircle.com](https://www.duocircle.com/outbound-smtp)
+2. Add your sending domain (`cfored.com`) and verify ownership
+3. Note your SMTP credentials from the DuoCircle dashboard:
+   - **SMTP Host**: `smtp.duocircle.com`
+   - **Port**: `587` (STARTTLS) or `465` (SSL)
+   - **Username**: your DuoCircle username (usually your email)
+   - **Password**: your DuoCircle SMTP password
+
+### 10b. Configure DNS records for DuoCircle
+
+Add these DNS records for `cfored.com` to authorize DuoCircle as a sender:
+
+```
+# SPF — add DuoCircle to your existing SPF record
+cfored.com  TXT  "v=spf1 include:_spf.google.com include:spf.duocircle.com ~all"
+
+# DKIM — DuoCircle provides a DKIM key during domain setup
+duocircle._domainkey.cfored.com  TXT  "v=DKIM1; k=rsa; p=<key-from-duocircle-dashboard>"
+
+# DMARC — if not already set
+_dmarc.cfored.com  TXT  "v=DMARC1; p=quarantine; rua=mailto:dmarc@cfored.com"
+```
+
+Verify propagation:
+
+```bash
+dig TXT cfored.com +short        # Check SPF
+dig TXT duocircle._domainkey.cfored.com +short  # Check DKIM
+```
+
+### 10c. Add DuoCircle env vars
+
+Add the following to your `.env` (or Cloud Run env vars):
+
+```bash
+# DuoCircle SMTP relay (alternative transport)
+DUOCIRCLE_HOST=smtp.duocircle.com
+DUOCIRCLE_PORT=587
+DUOCIRCLE_USER=your-duocircle-username
+DUOCIRCLE_PASS=your-duocircle-password
+DUOCIRCLE_SECURE=false
+# Set to 'duocircle' to route all email through DuoCircle instead of Gmail
+# Set to 'gmail' (default) to keep using Gmail OAuth2
+EMAIL_TRANSPORT=gmail
+```
+
+For Cloud Run, store the password in Secret Manager:
+
+```bash
+echo -n "YOUR_DUOCIRCLE_PASSWORD" | \
+  gcloud secrets create duocircle-smtp-password --data-file=-
+
+gcloud run services update gmail-relay \
+  --region us-central1 \
+  --update-env-vars "\
+DUOCIRCLE_HOST=smtp.duocircle.com,\
+DUOCIRCLE_PORT=587,\
+DUOCIRCLE_USER=your-duocircle-username,\
+DUOCIRCLE_SECURE=false,\
+EMAIL_TRANSPORT=duocircle"
+```
+
+### 10d. Add DuoCircle transport to the email service
+
+In `src/services/email.js`, add a DuoCircle transport factory alongside the existing Gmail one:
+
+```javascript
+/**
+ * Build a Nodemailer transport for DuoCircle SMTP relay.
+ */
+function createDuoCircleTransport(profileName = 'director') {
+  const creds = PROFILES[profileName] || PROFILES.director;
+  return nodemailer.createTransport({
+    host: process.env.DUOCIRCLE_HOST || 'smtp.duocircle.com',
+    port: parseInt(process.env.DUOCIRCLE_PORT || '587', 10),
+    secure: process.env.DUOCIRCLE_SECURE === 'true',
+    auth: {
+      user: process.env.DUOCIRCLE_USER,
+      pass: process.env.DUOCIRCLE_PASS,
+    },
+  });
+}
+```
+
+Update the `createTransport()` function to check `EMAIL_TRANSPORT`:
+
+```javascript
+async function createTransport(profileName = 'director') {
+  if (process.env.EMAIL_TRANSPORT === 'duocircle') {
+    return createDuoCircleTransport(profileName);
+  }
+
+  // Default: Gmail OAuth2
+  const creds = await getOAuthClient(profileName);
+  const { token } = await creds.oAuth2Client.getAccessToken();
+  return nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      type: 'OAuth2',
+      user: creds.senderEmail,
+      clientId: creds.clientId,
+      clientSecret: creds.clientSecret,
+      refreshToken: creds.refreshToken,
+      accessToken: token,
+    },
+  });
+}
+```
+
+### 10e. Route cPanel Exim through DuoCircle directly (optional)
+
+If you want cPanel's Exim to use DuoCircle as a smarthost for **all** outbound mail (bypassing the Blue Truck API entirely for non-tracked emails):
+
+1. In WHM, go to **Exim Configuration Manager** → **Basic Editor**
+2. Under **Smart Host**, set:
+   - **Smart Host**: `smtp.duocircle.com`
+   - **SMTP Port**: `587`
+3. Under **Advanced Editor** → `POSTMAILCOUNT` section, add authentication:
+
+```
+# /etc/exim.conf custom router (via WHM Advanced Editor)
+duocircle_smarthost:
+  driver = manualroute
+  domains = ! +local_domains
+  transport = duocircle_smtp
+  route_list = * smtp.duocircle.com::587
+  no_more
+
+# Transport
+duocircle_smtp:
+  driver = smtp
+  hosts_require_auth = smtp.duocircle.com
+  hosts_require_tls = smtp.duocircle.com
+```
+
+4. Add SMTP authentication in `/etc/exim/smtp_auth`:
+
+```
+smtp.duocircle.com:your-duocircle-username:your-duocircle-password
+```
+
+5. Restart Exim:
+
+```bash
+systemctl restart exim
+```
+
+6. Test:
+
+```bash
+echo "Test via DuoCircle" | mail -s "Smarthost test" test@example.com
+tail -f /var/log/exim_mainlog
+# Should show relay through smtp.duocircle.com
+```
+
+### When to use DuoCircle vs Gmail API
+
+| Factor | Gmail API (OAuth2) | DuoCircle SMTP |
+|---|---|---|
+| Daily limit | 2,000/user (Workspace) | Based on plan (10k–1M+) |
+| Authentication | OAuth2 tokens | Username/password |
+| Deliverability | Good (Gmail reputation) | Good (dedicated IP available) |
+| Setup complexity | Higher (OAuth flow) | Lower (SMTP credentials) |
+| Cost | Free (within limits) | Paid plan |
+| Tracking | Built-in via this system | Built-in via this system |
+| Best for | Low-to-medium volume, Gmail domain | High volume, custom domain |
+
+> **Tip**: You can run both transports simultaneously. Use `profile` to select Gmail OAuth2 for personal emails and set `EMAIL_TRANSPORT=duocircle` as the default for bulk sends.
+
+---
+
+## Step 11: Install on a GCE VM (Alternative to Cloud Run)
 
 If you prefer running on a Compute Engine VM instead of Cloud Run:
 
@@ -536,7 +713,7 @@ sudo certbot --nginx -d relay.cfored.com
 
 ---
 
-## Step 11: Verify Everything Works
+## Step 12: Verify Everything Works
 
 ### Test 1: Health check
 
@@ -634,28 +811,28 @@ curl -X POST $RELAY_URL/relay/send \
               │  /relay/stats        │  ← Stats API
               └──────────┬───────────┘
                          │
-                ┌────────┴────────┐
-                │                 │
-                ▼                 ▼
-     ┌─────────────────┐  ┌─────────────────┐
-     │  Gmail API       │  │  Firebase RTDB   │
-     │  (3 OAuth2       │  │                  │
-     │   clients)       │  │  /queue          │
-     │                  │  │  /deliveries     │
-     │  general@        │  │  /bounces        │
-     │  director@       │  │  /spam           │
-     │  team@           │  │  /opens          │
-     └─────────────────┘  │  /suppressions   │
-                           └────────┬─────────┘
-                                    │ trigger
-                                    ▼
-                         ┌─────────────────────┐
-                         │  Orange Airplane ✈️   │
-                         │  (Cloud Function)    │
-                         │                      │
-                         │  Processes /queue     │
-                         │  items async          │
-                         └─────────────────────┘
+           ┌─────────────┼─────────────┐
+           │             │             │
+           ▼             ▼             ▼
+  ┌────────────────┐ ┌─────────┐ ┌─────────────────┐
+  │  Gmail API     │ │DuoCircle│ │  Firebase RTDB   │
+  │  (3 OAuth2     │ │  SMTP   │ │                  │
+  │   clients)     │ │  Relay  │ │  /queue          │
+  │                │ │         │ │  /deliveries     │
+  │  general@      │ │  High   │ │  /bounces        │
+  │  director@     │ │  volume │ │  /spam           │
+  │  team@         │ │  sends  │ │  /opens          │
+  └────────────────┘ └─────────┘ │  /suppressions   │
+                                  └────────┬─────────┘
+                                           │ trigger
+                                           ▼
+                                ┌─────────────────────┐
+                                │  Orange Airplane ✈️   │
+                                │  (Cloud Function)    │
+                                │                      │
+                                │  Processes /queue     │
+                                │  items async          │
+                                └─────────────────────┘
 
      ┌──────────────────────────────────────────┐
      │  Webhook Server (Cloud Run)               │
@@ -680,3 +857,6 @@ curl -X POST $RELAY_URL/relay/send \
 | Cloud Run cold starts | Set `--min-instances 1` for the relay service |
 | Open tracking not recording | Check that `TRACKING_BASE_URL` matches the webhook server's public URL |
 | Weekly report not sending | Check Cloud Function logs: `firebase functions:log --only weeklyReport` |
+| DuoCircle `ECONNREFUSED` | Check `DUOCIRCLE_PORT` (587 for STARTTLS, 465 for SSL) and ensure `DUOCIRCLE_SECURE` matches |
+| DuoCircle `535 Authentication failed` | Verify SMTP username/password in DuoCircle dashboard; ensure account is active |
+| DuoCircle emails rejected by recipient | Add SPF `include:spf.duocircle.com` and configure DKIM in your DNS (Step 10b) |
