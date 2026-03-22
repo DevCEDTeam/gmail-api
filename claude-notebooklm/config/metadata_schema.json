@@ -1,0 +1,123 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Claude-NotebookLM Metadata Exchange Schema",
+  "description": "Defines the structure for bidirectional metadata exchange between Claude Code hooks and NotebookLM",
+  "version": "1.0.0",
+  "definitions": {
+    "source_entry": {
+      "type": "object",
+      "required": ["source_id", "source_type", "title", "content", "timestamp"],
+      "properties": {
+        "source_id": {
+          "type": "string",
+          "description": "Unique identifier for the source entry"
+        },
+        "source_type": {
+          "type": "string",
+          "enum": [
+            "hook_event",
+            "session_transcript",
+            "code_diff",
+            "tool_invocation",
+            "reasoning_trace",
+            "architecture_note"
+          ],
+          "description": "Type of Claude Code source"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 200
+        },
+        "content": {
+          "type": "string",
+          "description": "Full text content of the source"
+        },
+        "metadata": {
+          "$ref": "#/definitions/source_metadata"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "source_metadata": {
+      "type": "object",
+      "properties": {
+        "session_id": { "type": "string" },
+        "hook_type": {
+          "type": "string",
+          "enum": ["PreToolUse", "PostToolUse", "Notification", "SessionStart", "SessionStop"]
+        },
+        "tool_name": { "type": "string" },
+        "file_paths": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "tags": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "notebook_reference": {
+      "type": "object",
+      "required": ["notebook_id", "title"],
+      "properties": {
+        "notebook_id": { "type": "string" },
+        "title": { "type": "string" },
+        "source_count": { "type": "integer", "minimum": 0 },
+        "last_synced": { "type": "string", "format": "date-time" }
+      }
+    },
+    "sync_record": {
+      "type": "object",
+      "required": ["sync_id", "direction", "status", "timestamp"],
+      "properties": {
+        "sync_id": { "type": "string" },
+        "direction": {
+          "type": "string",
+          "enum": ["push", "pull", "bidirectional"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "in_progress", "completed", "failed"]
+        },
+        "sources_transferred": { "type": "integer", "minimum": 0 },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "error": { "type": "string" }
+      }
+    }
+  },
+  "claude_code_sources": [
+    {
+      "source_type": "hook_event",
+      "description": "Raw hook event payloads from PreToolUse/PostToolUse hooks, containing tool names, parameters, and execution results"
+    },
+    {
+      "source_type": "session_transcript",
+      "description": "Full or partial session transcripts capturing the conversation flow between user and Claude Code"
+    },
+    {
+      "source_type": "code_diff",
+      "description": "Git diffs and file changes produced during a coding session, with contextual annotations"
+    },
+    {
+      "source_type": "tool_invocation",
+      "description": "Structured records of tool calls (Read, Edit, Write, Bash, Grep, Glob) with inputs and outputs"
+    },
+    {
+      "source_type": "reasoning_trace",
+      "description": "Claude's reasoning and decision-making process for architectural choices, bug fixes, and implementation strategies"
+    },
+    {
+      "source_type": "architecture_note",
+      "description": "High-level architectural observations, dependency maps, and system design notes generated during code exploration"
+    }
+  ]
+}
