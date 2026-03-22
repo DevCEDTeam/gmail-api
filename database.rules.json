@@ -1,0 +1,36 @@
+{
+  "rules": {
+    "queue": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      ".indexOn": ["status", "createdAt"]
+    },
+    "deliveries": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      ".indexOn": ["trackingId", "deliveredAt", "to"]
+    },
+    "bounces": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      ".indexOn": ["email", "bouncedAt", "type"]
+    },
+    "spam": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      ".indexOn": ["email", "reportedAt"]
+    },
+    "opens": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$trackingId": {
+        ".indexOn": ["openedAt"]
+      }
+    },
+    "suppressions": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      ".indexOn": ["email", "suppressedAt"]
+    }
+  }
+}
