@@ -31,11 +31,15 @@ VALID_SOURCE_TYPES = {
 }
 
 
+DEFAULT_MODEL = "claude-opus-4-6"
+
+
 class ClaudeEngine:
     """Generates structured metadata from Claude Code hook events."""
 
-    def __init__(self, session_id: Optional[str] = None):
+    def __init__(self, session_id: Optional[str] = None, model: Optional[str] = None):
         self.session_id = session_id or str(uuid.uuid4())
+        self.model = model or DEFAULT_MODEL
         self._event_log: list[dict] = []
 
     def process_hook_event(self, event: dict) -> dict:
@@ -58,6 +62,9 @@ class ClaudeEngine:
         file_paths = self._extract_file_paths(event)
         tags = self._generate_tags(event, source_type)
 
+        c_hash = self.content_hash(content)
+        summary = self._generate_summary(content, source_type)
+
         entry = {
             "source_id": str(uuid.uuid4()),
             "source_type": source_type,
@@ -70,6 +77,9 @@ class ClaudeEngine:
                 "file_paths": file_paths,
                 "tags": tags,
                 "confidence": confidence,
+                "model": self.model,
+                "content_hash": c_hash,
+                "summary": summary,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -125,11 +135,12 @@ class ClaudeEngine:
         if rationale:
             content_parts.append(f"Rationale: {rationale}")
 
+        content = "\n".join(content_parts)
         entry = {
             "source_id": str(uuid.uuid4()),
             "source_type": "reasoning_trace",
             "title": f"Decision: {decision[:80]}" if decision else "Reasoning trace",
-            "content": "\n".join(content_parts),
+            "content": content,
             "metadata": {
                 "session_id": self.session_id,
                 "hook_type": None,
@@ -137,6 +148,9 @@ class ClaudeEngine:
                 "file_paths": [],
                 "tags": ["reasoning", "decision"],
                 "confidence": 0.9,
+                "model": self.model,
+                "content_hash": self.content_hash(content),
+                "summary": self._generate_summary(content, "reasoning_trace"),
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -168,11 +182,12 @@ class ClaudeEngine:
         if notes:
             content_parts.append(f"Notes: {notes}")
 
+        content = "\n".join(content_parts)
         entry = {
             "source_id": str(uuid.uuid4()),
             "source_type": "architecture_note",
             "title": title[:200],
-            "content": "\n".join(content_parts),
+            "content": content,
             "metadata": {
                 "session_id": self.session_id,
                 "hook_type": None,
@@ -180,6 +195,9 @@ class ClaudeEngine:
                 "file_paths": [],
                 "tags": ["architecture"] + [c.lower().replace(" ", "_") for c in components[:5]],
                 "confidence": 0.85,
+                "model": self.model,
+                "content_hash": self.content_hash(content),
+                "summary": self._generate_summary(content, "architecture_note"),
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -205,11 +223,143 @@ class ClaudeEngine:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
+    def enrich_sources(self, sources: list[dict]) -> list[dict]:
+        """Enrich pulled sources with Claude analysis.
+
+        Takes raw sources from NotebookLM and produces enriched entries
+        (reasoning traces / architecture notes) that can be pushed back,
+        completing the knowledge loop.
+
+        Args:
+            sources: Raw source entries pulled from NotebookLM.
+
+        Returns:
+            List of new enriched source entries ready to push back.
+        """
+        enriched = []
+        for source in sources:
+            content = source.get("content", "")
+            title = source.get("title", "")
+            source_type = source.get("source_type", "")
+
+            if not content:
+                continue
+
+            # Generate a reasoning trace that synthesizes the source
+            synthesis = (
+                f"Enrichment of: {title}\n"
+                f"Original type: {source_type}\n"
+                f"Analysis: {self._summarize_text(content)}\n"
+                f"Enriched by: {self.model}"
+            )
+
+            entry = {
+                "source_id": str(uuid.uuid4()),
+                "source_type": "reasoning_trace",
+                "title": f"Enrichment: {title[:150]}",
+                "content": synthesis,
+                "metadata": {
+                    "session_id": self.session_id,
+                    "hook_type": None,
+                    "tool_name": None,
+                    "file_paths": [],
+                    "tags": ["enrichment", "synthesis", source_type] if source_type else ["enrichment", "synthesis"],
+                    "confidence": 0.85,
+                    "model": self.model,
+                    "content_hash": self.content_hash(synthesis),
+                    "summary": self._generate_summary(synthesis, "reasoning_trace"),
+                    "enriched_from": source.get("source_id"),
+                },
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+            enriched.append(entry)
+            self._event_log.append(entry)
+
+        return enriched
+
+    def ground_query(self, query: str, sources: list[dict]) -> dict:
+        """Ground a query against pulled NotebookLM sources.
+
+        Searches sources for relevance, extracts citations, and
+        synthesizes a grounded answer.
+
+        Args:
+            query: The question to answer.
+            sources: Source entries from NotebookLM to search against.
+
+        Returns:
+            Grounded response with answer, citations, and source references.
+        """
+        query_lower = query.lower()
+        query_terms = set(query_lower.split())
+
+        scored_sources = []
+        for source in sources:
+            content = source.get("content", "").lower()
+            title = source.get("title", "").lower()
+            text = f"{title} {content}"
+
+            # Score by term overlap
+            matches = sum(1 for term in query_terms if term in text)
+            relevance = matches / max(len(query_terms), 1)
+
+            if relevance > 0:
+                scored_sources.append((source, relevance))
+
+        # Sort by relevance descending
+        scored_sources.sort(key=lambda x: x[1], reverse=True)
+        top_sources = scored_sources[:5]
+
+        # Build citations
+        citations = []
+        for source, relevance in top_sources:
+            content = source.get("content", "")
+            excerpt = content[:200] + "..." if len(content) > 200 else content
+            citations.append({
+                "source_id": source.get("source_id", ""),
+                "title": source.get("title", ""),
+                "excerpt": excerpt,
+                "relevance": round(relevance, 3),
+            })
+
+        # Synthesize answer from top sources
+        if citations:
+            answer_parts = [f"Based on {len(citations)} source(s):"]
+            for cit in citations:
+                answer_parts.append(f"- [{cit['title']}]: {cit['excerpt']}")
+            answer = "\n".join(answer_parts)
+        else:
+            answer = "No relevant sources found for this query."
+
+        return {
+            "answer": answer,
+            "citations": citations,
+            "source_count": len(citations),
+            "query": query,
+            "model": self.model,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
     def content_hash(self, content: str) -> str:
         """Generate a deterministic hash for content deduplication."""
         return hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
 
     # -- Private helpers --
+
+    def _generate_summary(self, content: str, source_type: str) -> str:
+        """Generate a concise summary of the content."""
+        return self._summarize_text(content)
+
+    def _summarize_text(self, text: str, max_length: int = 150) -> str:
+        """Create a truncated summary from text content."""
+        # Take first meaningful line(s) up to max_length
+        lines = [line.strip() for line in text.strip().split("\n") if line.strip()]
+        summary = ""
+        for line in lines:
+            if len(summary) + len(line) + 2 > max_length:
+                break
+            summary = f"{summary}; {line}" if summary else line
+        return summary or text[:max_length]
 
     def _generate_title(self, hook_type: str, tool_name: str, source_type: str) -> str:
         """Generate a human-readable title for the source entry."""

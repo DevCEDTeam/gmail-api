@@ -62,7 +62,44 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1
+        },
+        "model": {
+          "type": "string",
+          "description": "Claude model that generated this source (e.g. claude-opus-4-6)"
+        },
+        "content_hash": {
+          "type": "string",
+          "description": "SHA256 prefix hash for deduplication"
+        },
+        "summary": {
+          "type": "string",
+          "description": "Auto-generated summary of the source content"
         }
+      }
+    },
+    "grounded_response": {
+      "type": "object",
+      "required": ["answer", "citations"],
+      "properties": {
+        "answer": {
+          "type": "string",
+          "description": "Grounded answer synthesized from NotebookLM sources"
+        },
+        "citations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "source_id": { "type": "string" },
+              "title": { "type": "string" },
+              "excerpt": { "type": "string" },
+              "relevance": { "type": "number", "minimum": 0, "maximum": 1 }
+            }
+          },
+          "description": "Source citations grounding the answer"
+        },
+        "source_count": { "type": "integer" },
+        "query": { "type": "string" }
       }
     },
     "notebook_reference": {
@@ -90,7 +127,8 @@
         },
         "sources_transferred": { "type": "integer", "minimum": 0 },
         "timestamp": { "type": "string", "format": "date-time" },
-        "error": { "type": "string" }
+        "error": { "type": "string" },
+        "enrichments_added": { "type": "integer", "minimum": 0 }
       }
     }
   },

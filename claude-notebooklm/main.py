@@ -54,11 +54,12 @@ def index():
         "version": "1.0.0",
         "status": "ok",
         "endpoints": [
-            "POST /hook - Process Claude Code hook event",
-            "POST /push - Push sources to NotebookLM",
-            "POST /pull - Pull context from NotebookLM",
-            "POST /sync - Bidirectional sync",
-            "GET  /registry - View sync registry",
+            "POST /hook   - Process Claude Code hook event (with model, hash, summary)",
+            "POST /push   - Push sources to NotebookLM (batch)",
+            "POST /pull   - Pull context from NotebookLM",
+            "POST /ground - Grounded query with citations against NLM sources",
+            "POST /sync   - Bidirectional sync with enrichment loop",
+            "GET  /registry - View sync registry + knowledge loop stats",
             "GET  /health - Health check",
         ],
     })
@@ -146,12 +147,44 @@ def pull_context():
     return jsonify(result), 200
 
 
-# -- Bidirectional sync --
+# -- Grounded query --
+
+@app.route("/ground", methods=["POST"])
+def grounded_query():
+    """Query NotebookLM sources and get a grounded answer with citations.
+
+    Expects JSON body with notebook_id and query string.
+    """
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Request body must be JSON"}), 400
+
+    notebook_id = data.get("notebook_id")
+    if not notebook_id:
+        return jsonify({"error": "notebook_id is required"}), 400
+
+    query = data.get("query")
+    if not query:
+        return jsonify({"error": "query is required"}), 400
+
+    pipeline = get_pipeline()
+    result = pipeline.grounded_pull(
+        notebook_id=notebook_id,
+        query=query,
+        source_type=data.get("source_type"),
+        limit=data.get("limit", 20),
+    )
+
+    return jsonify(result), 200
+
+
+# -- Bidirectional sync with enrichment --
 
 @app.route("/sync", methods=["POST"])
 def full_sync():
-    """Perform a full bidirectional sync.
+    """Perform a full bidirectional sync with enrichment loop.
 
+    Pull → Claude enriches → Push back → Registry updated.
     Expects JSON body with notebook_id and optional push_events.
     """
     data = request.get_json(silent=True)
@@ -167,6 +200,7 @@ def full_sync():
         notebook_id=notebook_id,
         push_events=data.get("push_events"),
         pull_source_type=data.get("pull_source_type"),
+        enrich=data.get("enrich", True),
     )
 
     return jsonify(result), 200
@@ -176,13 +210,15 @@ def full_sync():
 
 @app.route("/registry", methods=["GET"])
 def view_registry():
-    """View the current sync registry."""
+    """View the current sync registry and knowledge loop stats."""
     pipeline = get_pipeline()
     limit = request.args.get("limit", 50, type=int)
+    registry = pipeline.get_registry()
 
     return jsonify({
         "source_count": pipeline.get_source_count(),
         "sync_history": pipeline.get_sync_history(limit=limit),
+        "knowledge_loop": registry.get("knowledge_loop", {}),
     })
 
 

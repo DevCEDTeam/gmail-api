@@ -196,26 +196,79 @@ class SyncPipeline:
         self._record_sync(sync_record)
         return sync_record
 
-    # -- Bidirectional sync --
+    # -- Grounded query --
+
+    def grounded_pull(
+        self,
+        notebook_id: str,
+        query: str,
+        source_type: Optional[str] = None,
+        limit: int = 20,
+    ) -> dict:
+        """Pull sources from NotebookLM and ground a query with citations.
+
+        Args:
+            notebook_id: Source notebook ID.
+            query: Question to ground against pulled sources.
+            source_type: Optional filter by source type.
+            limit: Maximum number of sources to pull.
+
+        Returns:
+            Grounded response with answer, citations, and sources.
+        """
+        sync_id = str(uuid.uuid4())
+        sync_record = self._create_sync_record(sync_id, "pull")
+
+        try:
+            sources = self.client.pull_sources(
+                notebook_id=notebook_id,
+                source_type=source_type,
+                limit=limit,
+            )
+
+            grounded = self.engine.ground_query(query, sources)
+
+            sync_record["status"] = "completed"
+            sync_record["sources_transferred"] = len(sources)
+            sync_record["grounded_response"] = grounded
+
+        except NotebookLMError as e:
+            sync_record["status"] = "failed"
+            sync_record["error"] = str(e)
+            sync_record["grounded_response"] = {
+                "answer": "Query grounding failed.",
+                "citations": [],
+                "source_count": 0,
+                "query": query,
+            }
+            logger.error("Grounded pull failed: %s", e)
+
+        self._record_sync(sync_record)
+        return sync_record
+
+    # -- Bidirectional sync with enrichment --
 
     def full_sync(
         self,
         notebook_id: str,
         push_events: Optional[list[dict]] = None,
         pull_source_type: Optional[str] = None,
+        enrich: bool = True,
     ) -> dict:
-        """Perform a full bidirectional sync.
+        """Perform a full bidirectional sync with enrichment loop.
 
-        1. Push any pending hook events to NotebookLM.
-        2. Pull latest research context back.
+        Flow: Pull → Claude enriches → Push enrichments back → Registry updated.
+        This creates a growing knowledge loop where each sync cycle adds
+        Claude-generated insights back into the NotebookLM notebook.
 
         Args:
             notebook_id: Target/source notebook ID.
             push_events: Events to push (optional).
             pull_source_type: Filter for pull (optional).
+            enrich: Whether to run the enrichment loop (default True).
 
         Returns:
-            Combined sync result.
+            Combined sync result with enrichment details.
         """
         sync_id = str(uuid.uuid4())
         result = {
@@ -224,17 +277,84 @@ class SyncPipeline:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "push_result": None,
             "pull_result": None,
+            "enrichment_result": None,
         }
 
+        # Step 1: Push any pending hook events
         if push_events:
             result["push_result"] = self.push_batch(notebook_id, push_events)
 
-        result["pull_result"] = self.pull_context(
+        # Step 2: Pull latest research context
+        pull_record = self.pull_context(
             notebook_id,
             source_type=pull_source_type,
         )
+        result["pull_result"] = pull_record
+
+        # Step 3: Enrich pulled sources and push back (knowledge loop)
+        if enrich and pull_record.get("status") == "completed":
+            pulled_sources = pull_record.get("sources", [])
+            if pulled_sources:
+                result["enrichment_result"] = self._enrich_and_push(
+                    notebook_id, pulled_sources
+                )
 
         return result
+
+    def _enrich_and_push(self, notebook_id: str, sources: list[dict]) -> dict:
+        """Run the enrichment loop: Claude analyzes sources, pushes insights back.
+
+        Args:
+            notebook_id: Target notebook for enriched sources.
+            sources: Raw sources pulled from NotebookLM.
+
+        Returns:
+            Enrichment result with counts and records.
+        """
+        enriched_entries = self.engine.enrich_sources(sources)
+
+        succeeded = 0
+        failed = 0
+        records = []
+
+        for entry in enriched_entries:
+            content_hash = entry["metadata"].get("content_hash", "")
+
+            if self._is_duplicate(content_hash):
+                records.append({"status": "duplicate_skipped", "source_id": entry["source_id"]})
+                continue
+
+            try:
+                result = self.client.push_source(
+                    notebook_id=notebook_id,
+                    source_type=entry["source_type"],
+                    title=entry["title"],
+                    content=entry["content"],
+                    metadata=entry.get("metadata"),
+                )
+                self._register_source(content_hash, result)
+                records.append({"status": "completed", "source_id": entry["source_id"]})
+                succeeded += 1
+            except NotebookLMError as e:
+                records.append({"status": "failed", "error": str(e)})
+                failed += 1
+
+        # Update registry knowledge count
+        self._registry.setdefault("knowledge_loop", {})
+        loop_count = self._registry["knowledge_loop"].get("enrichment_cycles", 0)
+        self._registry["knowledge_loop"]["enrichment_cycles"] = loop_count + 1
+        self._registry["knowledge_loop"]["last_enriched"] = datetime.now(timezone.utc).isoformat()
+        self._registry["knowledge_loop"]["total_enrichments"] = (
+            self._registry["knowledge_loop"].get("total_enrichments", 0) + succeeded
+        )
+        self._save_registry()
+
+        return {
+            "enrichments_generated": len(enriched_entries),
+            "succeeded": succeeded,
+            "failed": failed,
+            "records": records,
+        }
 
     # -- Registry operations --
 

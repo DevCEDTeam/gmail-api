@@ -1,10 +1,10 @@
 """Tests for Claude-NotebookLM bidirectional sync pipeline.
 
-51 tests covering:
+Tests covering:
 - NotebookLMClient (13 tests)
-- ClaudeEngine (16 tests)
-- SyncPipeline (14 tests)
-- Flask API endpoints (8 tests)
+- ClaudeEngine (24 tests)
+- SyncPipeline (22 tests)
+- Flask API endpoints (10 tests)
 """
 
 import json
@@ -245,7 +245,7 @@ class TestClaudeEngine(unittest.TestCase):
         result = self.engine.process_hook_event(event)
         self.assertIn("/home/user/test.py", result["metadata"]["file_paths"])
 
-    # 30 (bonus: confidence scoring)
+    # 30
     def test_confidence_scoring(self):
         event = {"hook_type": "PreToolUse", "tool_name": "Edit", "tool_input": {"file_path": "/a.py"}}
         result = self.engine.process_hook_event(event)
@@ -253,9 +253,99 @@ class TestClaudeEngine(unittest.TestCase):
         self.assertGreaterEqual(confidence, 0.5)
         self.assertLessEqual(confidence, 1.0)
 
+    # 31: model field in metadata
+    def test_model_field_in_hook_event(self):
+        event = {"hook_type": "PostToolUse", "tool_name": "Edit"}
+        result = self.engine.process_hook_event(event)
+        self.assertEqual(result["metadata"]["model"], "claude-opus-4-6")
+
+    # 32: custom model
+    def test_custom_model(self):
+        engine = ClaudeEngine(model="claude-sonnet-4-6")
+        result = engine.process_hook_event({"hook_type": "PreToolUse"})
+        self.assertEqual(result["metadata"]["model"], "claude-sonnet-4-6")
+
+    # 33: content_hash in metadata
+    def test_content_hash_in_metadata(self):
+        event = {"hook_type": "PostToolUse", "tool_name": "Read"}
+        result = self.engine.process_hook_event(event)
+        self.assertIn("content_hash", result["metadata"])
+        self.assertEqual(len(result["metadata"]["content_hash"]), 16)
+
+    # 34: summary in metadata
+    def test_summary_in_metadata(self):
+        event = {"hook_type": "PostToolUse", "tool_name": "Bash", "description": "Run tests"}
+        result = self.engine.process_hook_event(event)
+        self.assertIn("summary", result["metadata"])
+        self.assertTrue(len(result["metadata"]["summary"]) > 0)
+
+    # 35: model in reasoning trace
+    def test_model_in_reasoning_trace(self):
+        ctx = {"decision": "Use Flask", "rationale": "Lightweight"}
+        result = self.engine.generate_reasoning_trace(ctx)
+        self.assertEqual(result["metadata"]["model"], "claude-opus-4-6")
+        self.assertIn("content_hash", result["metadata"])
+
+    # 36: model in architecture note
+    def test_model_in_architecture_note(self):
+        result = self.engine.generate_architecture_note("Design", ["A", "B"])
+        self.assertEqual(result["metadata"]["model"], "claude-opus-4-6")
+        self.assertIn("content_hash", result["metadata"])
+
+    # 37: enrich_sources produces entries
+    def test_enrich_sources(self):
+        sources = [
+            {"source_id": "s1", "title": "Hook patterns", "content": "PreToolUse hooks can block tools", "source_type": "hook_event"},
+            {"source_id": "s2", "title": "API design", "content": "REST endpoints for sync", "source_type": "architecture_note"},
+        ]
+        enriched = self.engine.enrich_sources(sources)
+        self.assertEqual(len(enriched), 2)
+        for entry in enriched:
+            self.assertEqual(entry["source_type"], "reasoning_trace")
+            self.assertIn("Enrichment:", entry["title"])
+            self.assertIn("enrichment", entry["metadata"]["tags"])
+            self.assertIn("enriched_from", entry["metadata"])
+
+    # 38: enrich_sources skips empty content
+    def test_enrich_sources_skips_empty(self):
+        sources = [{"source_id": "s1", "title": "Empty", "content": ""}]
+        enriched = self.engine.enrich_sources(sources)
+        self.assertEqual(len(enriched), 0)
+
+    # 39: ground_query with matching sources
+    def test_ground_query_with_matches(self):
+        sources = [
+            {"source_id": "s1", "title": "Hook system", "content": "Hooks enable two-way metadata exchange"},
+            {"source_id": "s2", "title": "Unrelated", "content": "Python is a programming language"},
+        ]
+        result = self.engine.ground_query("How do hooks exchange metadata?", sources)
+        self.assertIn("answer", result)
+        self.assertIn("citations", result)
+        self.assertGreater(len(result["citations"]), 0)
+        self.assertEqual(result["citations"][0]["source_id"], "s1")
+        self.assertIn("model", result)
+
+    # 40: ground_query with no matches
+    def test_ground_query_no_matches(self):
+        sources = [{"source_id": "s1", "title": "Cooking", "content": "Recipes for pasta"}]
+        result = self.engine.ground_query("quantum physics", sources)
+        self.assertEqual(len(result["citations"]), 0)
+        self.assertIn("No relevant sources", result["answer"])
+
+    # 41: ground_query citation relevance scores
+    def test_ground_query_citation_relevance(self):
+        sources = [
+            {"source_id": "s1", "title": "Hooks", "content": "hooks enable metadata exchange"},
+            {"source_id": "s2", "title": "Other", "content": "hooks are useful"},
+        ]
+        result = self.engine.ground_query("hooks metadata", sources)
+        for cit in result["citations"]:
+            self.assertGreater(cit["relevance"], 0)
+            self.assertLessEqual(cit["relevance"], 1.0)
+
 
 # ============================================================
-# SyncPipeline Tests (14 tests)
+# SyncPipeline Tests
 # ============================================================
 
 class TestSyncPipeline(unittest.TestCase):
@@ -385,7 +475,6 @@ class TestSyncPipeline(unittest.TestCase):
         self.pipeline.push_hook_event("nb-1", event)
         self.assertEqual(self.pipeline.get_source_count(), 1)
 
-    # 44
     def test_clear_registry(self):
         event = {"hook_type": "PostToolUse", "tool_name": "Edit"}
         self.pipeline.push_hook_event("nb-1", event)
@@ -393,10 +482,81 @@ class TestSyncPipeline(unittest.TestCase):
         self.assertEqual(self.pipeline.get_source_count(), 0)
         self.assertEqual(len(self.pipeline.get_sync_history()), 0)
 
+    # -- Grounded pull tests --
+
+    def test_grounded_pull_success(self):
+        self.mock_client.pull_sources.return_value = [
+            {"source_id": "s1", "title": "Hooks", "content": "hooks enable metadata exchange"},
+            {"source_id": "s2", "title": "API", "content": "REST API design patterns"},
+        ]
+        result = self.pipeline.grounded_pull("nb-1", "How do hooks work?")
+        self.assertEqual(result["status"], "completed")
+        self.assertIn("grounded_response", result)
+        self.assertIn("citations", result["grounded_response"])
+        self.assertIn("answer", result["grounded_response"])
+
+    def test_grounded_pull_failure(self):
+        self.mock_client.pull_sources.side_effect = NotebookLMError("network error")
+        result = self.pipeline.grounded_pull("nb-1", "test query")
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["grounded_response"]["source_count"], 0)
+
+    def test_grounded_pull_preserves_query(self):
+        result = self.pipeline.grounded_pull("nb-1", "specific question about hooks")
+        self.assertEqual(result["grounded_response"]["query"], "specific question about hooks")
+
+    # -- Enrichment loop tests --
+
+    def test_full_sync_with_enrichment(self):
+        self.mock_client.pull_sources.return_value = [
+            {"source_id": "s1", "title": "Research", "content": "Important finding about architecture", "source_type": "architecture_note"},
+        ]
+        result = self.pipeline.full_sync("nb-1", enrich=True)
+        self.assertIn("enrichment_result", result)
+        self.assertIsNotNone(result["enrichment_result"])
+        self.assertGreater(result["enrichment_result"]["enrichments_generated"], 0)
+
+    def test_full_sync_without_enrichment(self):
+        result = self.pipeline.full_sync("nb-1", enrich=False)
+        self.assertIsNone(result["enrichment_result"])
+
+    def test_enrichment_pushes_back(self):
+        self.mock_client.pull_sources.return_value = [
+            {"source_id": "s1", "title": "Note", "content": "Some research content", "source_type": "hook_event"},
+        ]
+        result = self.pipeline.full_sync("nb-1", enrich=True)
+        # push_source called for enrichment push-back
+        enrichment = result["enrichment_result"]
+        self.assertGreater(enrichment["succeeded"], 0)
+
+    def test_enrichment_updates_knowledge_loop(self):
+        self.mock_client.pull_sources.return_value = [
+            {"source_id": "s1", "title": "Note", "content": "Research content", "source_type": "hook_event"},
+        ]
+        self.pipeline.full_sync("nb-1", enrich=True)
+        registry = self.pipeline.get_registry()
+        self.assertIn("knowledge_loop", registry)
+        self.assertEqual(registry["knowledge_loop"]["enrichment_cycles"], 1)
+        self.assertGreater(registry["knowledge_loop"]["total_enrichments"], 0)
+
+    def test_enrichment_deduplicates(self):
+        self.mock_client.pull_sources.return_value = [
+            {"source_id": "s1", "title": "Note", "content": "Same content", "source_type": "hook_event"},
+        ]
+        # First sync enriches
+        self.pipeline.full_sync("nb-1", enrich=True)
+        # Second sync should skip duplicate enrichments
+        result = self.pipeline.full_sync("nb-1", enrich=True)
+        enrichment = result["enrichment_result"]
+        has_skipped = any(
+            r.get("status") == "duplicate_skipped"
+            for r in enrichment.get("records", [])
+        )
+        self.assertTrue(has_skipped)
+
 
 # ============================================================
-# Flask API Tests (8 tests)  -- tests 45-52 but we need 51 total
-# so this section has 7 tests to reach exactly 51
+# Flask API Tests
 # ============================================================
 
 class TestFlaskAPI(unittest.TestCase):
@@ -444,7 +604,6 @@ class TestFlaskAPI(unittest.TestCase):
         response = self.app.post("/pull", json={})
         self.assertEqual(response.status_code, 400)
 
-    # 51
     def test_sync_requires_notebook_id(self):
         response = self.app.post(
             "/sync",
@@ -454,6 +613,24 @@ class TestFlaskAPI(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         data = response.get_json()
         self.assertIn("notebook_id", data["error"])
+
+    def test_ground_requires_notebook_id(self):
+        response = self.app.post("/ground", json={"query": "test"})
+        self.assertEqual(response.status_code, 400)
+        data = response.get_json()
+        self.assertIn("notebook_id", data["error"])
+
+    def test_ground_requires_query(self):
+        response = self.app.post("/ground", json={"notebook_id": "nb-1"})
+        self.assertEqual(response.status_code, 400)
+        data = response.get_json()
+        self.assertIn("query", data["error"])
+
+    def test_registry_includes_knowledge_loop(self):
+        response = self.app.get("/registry")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertIn("knowledge_loop", data)
 
 
 if __name__ == "__main__":
