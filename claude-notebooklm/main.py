@@ -54,6 +54,7 @@ def index():
         "version": "1.0.0",
         "status": "ok",
         "endpoints": [
+            "POST /notebooks - Create a new NotebookLM notebook",
             "POST /hook   - Process Claude Code hook event (with model, hash, summary)",
             "POST /push   - Push sources to NotebookLM (batch)",
             "POST /pull   - Pull context from NotebookLM",
@@ -69,6 +70,31 @@ def index():
 def health():
     """Health check for Cloud Run."""
     return jsonify({"status": "healthy"}), 200
+
+
+# -- Notebook operations --
+
+@app.route("/notebooks", methods=["POST"])
+def create_notebook():
+    """Create a new NotebookLM notebook.
+
+    Expects JSON body with title (required).
+    Returns the created notebook record.
+    """
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Request body must be JSON"}), 400
+
+    title = data.get("title")
+    if not title:
+        return jsonify({"error": "title is required"}), 400
+
+    pipeline = get_pipeline()
+    try:
+        result = pipeline.client.create_notebook(title)
+        return jsonify(result), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # -- Hook event processing --

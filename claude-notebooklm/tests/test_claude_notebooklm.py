@@ -632,6 +632,20 @@ class TestFlaskAPI(unittest.TestCase):
         data = response.get_json()
         self.assertIn("knowledge_loop", data)
 
+    def test_create_notebook_requires_title(self):
+        response = self.app.post(
+            "/notebooks",
+            data=json.dumps({"extra": "no title"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        data = response.get_json()
+        self.assertIn("title", data["error"])
+
+    def test_create_notebook_requires_json(self):
+        response = self.app.post("/notebooks", data="not json")
+        self.assertEqual(response.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()
