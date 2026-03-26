@@ -8,7 +8,7 @@
  *   /spam           – spam complaint records
  *   /suppressions   – unsubscribed / DNC contacts
  *   /opens          – open-tracking events
- *   /clicks         – click-tracking events (future)
+ *   /clicks         – click-tracking events
  */
 
 const { getDatabase } = require('../config/firebase');
@@ -124,6 +124,26 @@ async function getOpenCount(trackingId) {
 }
 
 // ---------------------------------------------------------------------------
+// Clicks
+// ---------------------------------------------------------------------------
+
+async function recordClick(trackingId, linkId, metadata = {}) {
+  const db = getDatabase();
+  const ref = db.ref(`clicks/${trackingId}`).push();
+  await ref.set({
+    linkId,
+    clickedAt: Date.now(),
+    ...metadata,
+  });
+}
+
+async function getClickCount(trackingId) {
+  const db = getDatabase();
+  const snap = await db.ref(`clicks/${trackingId}`).once('value');
+  return snap.numChildren();
+}
+
+// ---------------------------------------------------------------------------
 // Suppressions (DNC list)
 // ---------------------------------------------------------------------------
 
@@ -194,6 +214,9 @@ module.exports = {
   // Opens
   recordOpen,
   getOpenCount,
+  // Clicks
+  recordClick,
+  getClickCount,
   // Suppressions
   addSuppression,
   isSuppressed,

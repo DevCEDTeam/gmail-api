@@ -4,6 +4,7 @@
  * Endpoints:
  *   POST /mailer/callback           – Mautic / ESP bounce & spam callbacks
  *   GET  /tracking/open/:trackingId – Open-tracking pixel
+ *   GET  /tracking/click/:trackingId/:linkId – Click-tracking redirect
  *   GET  /email/unsubscribe/:id     – Unsubscribe preference page
  *   POST /email/unsubscribe/:id     – Process unsubscribe (RFC 8058 one-click)
  *   GET  /email/dnc/:id             – Full Do-Not-Contact opt-out
@@ -52,6 +53,31 @@ app.get('/tracking/open/:trackingId', async (req, res) => {
     Expires: '0',
   });
   res.end(TRACKING_PIXEL);
+});
+
+// -------------------------------------------------------------------------
+// Click tracking redirect
+// -------------------------------------------------------------------------
+
+app.get('/tracking/click/:trackingId/:linkId', async (req, res) => {
+  const { trackingId, linkId } = req.params;
+  const url = req.query.url;
+
+  try {
+    await db.recordClick(trackingId, linkId, {
+      ip: req.ip,
+      userAgent: req.get('user-agent'),
+    });
+  } catch (err) {
+    console.error(`[click-tracking] Error recording click: ${err.message}`);
+  }
+
+  // Always redirect regardless of DB errors
+  if (url) {
+    res.redirect(302, url);
+  } else {
+    res.status(400).json({ error: 'Missing url query parameter' });
+  }
 });
 
 // -------------------------------------------------------------------------
@@ -254,6 +280,7 @@ if (require.main === module) {
     console.log(`[webhooks] Listening on port ${PORT}`);
     console.log(`[webhooks] Callback URL: POST /mailer/callback`);
     console.log(`[webhooks] Open pixel:   GET  /tracking/open/:trackingId`);
+    console.log(`[webhooks] Click track:  GET  /tracking/click/:trackingId/:linkId`);
     console.log(`[webhooks] Unsubscribe:  GET  /email/unsubscribe/:trackingId`);
     console.log(`[webhooks] DNC:          GET  /email/dnc/:trackingId`);
   });

@@ -4,7 +4,7 @@ Project guide for AI assistants working on this codebase.
 
 ## Project Overview
 
-Gmail Bulk Sending System (v2.0.0) — a Node.js email relay with full tracking (bounces, opens, spam, unsubscribes) via Gmail OAuth2, Firebase Realtime Database, and optional DuoCircle SMTP. Designed for the domain `cfored.com`. GCP Project ID: `gmail-bulk-sending-389112`.
+Gmail Bulk Sending System (v2.0.0) — a Node.js email relay with full tracking (bounces, opens, clicks, spam, unsubscribes) via Gmail OAuth2, Firebase Realtime Database, and optional DuoCircle SMTP. Designed for the domain `cfored.com`. GCP Project ID: `gmail-bulk-sending-389112`.
 
 ## Quick Reference
 
@@ -52,12 +52,12 @@ gmail-api/
     │   ├── credentials.js     # OAuth2 multi-profile manager (3 wristbands)
     │   └── firebase.js        # Firebase Admin SDK init (singleton)
     ├── services/
-    │   ├── email.js           # Core send logic + tracking pixel + suppression
-    │   └── database.js        # Firebase RTDB data-access layer (6 collections)
+    │   ├── email.js           # Core send logic + tracking pixel + click wrapping + suppression
+    │   └── database.js        # Firebase RTDB data-access layer (7 collections)
     ├── relay/
     │   └── server.js          # Express: /relay/send, /relay/bulk, /relay/queue, /relay/stats
     ├── webhooks/
-    │   └── server.js          # Express: /mailer/callback, /tracking/open/:id, /email/unsubscribe/:id, /email/dnc/:id
+    │   └── server.js          # Express: /mailer/callback, /tracking/open/:id, /tracking/click/:id/:linkId, /email/unsubscribe/:id, /email/dnc/:id
     ├── queue/
     │   └── worker.js          # Processes /queue items with concurrency control
     ├── reports/
@@ -80,7 +80,7 @@ src/relay/server.js
 └── src/config/firebase.js         → initFirebase()
 
 src/webhooks/server.js
-├── src/services/database.js       → recordOpen(), recordBounce(), recordSpam(), addSuppression()
+├── src/services/database.js       → recordOpen(), recordClick(), recordBounce(), recordSpam(), addSuppression()
 ├── src/services/email.js          → TRACKING_PIXEL (Buffer)
 └── src/config/firebase.js         → getDatabase() [dynamic require in unsubscribe/dnc handlers]
 
@@ -158,6 +158,7 @@ Managed by `src/services/database.js`. Rules in `database.rules.json`.
 | `/bounces` | Hard & soft bounces | email, type (hard/soft), reason |
 | `/spam` | Spam complaints | email, feedbackType |
 | `/opens` | Open tracking events | trackingId/{pushKey}/openedAt |
+| `/clicks` | Click tracking events | trackingId/{pushKey}/linkId, clickedAt |
 | `/suppressions` | DNC list | email, reason, suppressedAt |
 
 Suppression keys are base64-encoded emails with special chars replaced (`[.#$/[\]]` → `_`).
@@ -182,12 +183,13 @@ Every send in `src/services/email.js` follows this flow:
 1. Check suppression list (skip if suppressed)
 2. Generate UUID tracking ID
 3. Append 1x1 tracking pixel to HTML
-4. Build transport (Gmail or DuoCircle)
-5. Resolve sender identity (from address + display name)
-6. Add List-Unsubscribe headers (RFC 8058)
-7. Send via nodemailer
-8. Record delivery in Firebase
-9. Update queue item status (if queued)
+4. Wrap `<a href>` links for click tracking (skips mailto:, #, unsubscribe/dnc links)
+5. Build transport (Gmail or DuoCircle)
+6. Resolve sender identity (from address + display name)
+7. Add List-Unsubscribe headers (RFC 8058)
+8. Send via nodemailer
+9. Record delivery in Firebase
+10. Update queue item status (if queued)
 
 ### Webhook Event Types
 
@@ -217,6 +219,7 @@ GET  /relay/stats      → Stats. Query: ?since=ISO-date (default: 7 days)
 GET  /health                        → {"status":"ok"}
 POST /mailer/callback               → Mautic/ESP event webhook (accepts array or single event)
 GET  /tracking/open/:trackingId     → Returns 1x1 GIF, records open
+GET  /tracking/click/:trackingId/:linkId?url=ENCODED → Records click, 302 redirects to url
 GET  /email/unsubscribe/:trackingId → Unsubscribe confirmation page
 POST /email/unsubscribe/:trackingId → Process unsubscribe (RFC 8058 one-click)
 GET  /email/dnc/:trackingId         → Full DNC opt-out

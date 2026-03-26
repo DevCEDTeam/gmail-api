@@ -3,6 +3,7 @@
  *
  * Features:
  *   - Open tracking via 1×1 transparent pixel
+ *   - Click tracking via link redirect wrapping
  *   - List-Unsubscribe + One-Click Unsubscribe (RFC 8058) headers
  *   - Suppression list check before every send
  *   - Delivery recording to Firebase
@@ -96,6 +97,32 @@ function unsubscribeHeaders(recipientEmail, trackingId) {
 }
 
 /**
+ * Rewrite <a href="..."> links in HTML to route through the click tracker.
+ * Skips mailto: links, unsubscribe/dnc links, and anchor (#) links.
+ */
+function wrapLinksForTracking(html, trackingId) {
+  let linkIndex = 0;
+  return html.replace(
+    /<a\s([^>]*?)href=["']([^"']+)["']([^>]*)>/gi,
+    (match, before, href, after) => {
+      // Skip non-http links, internal tracking/unsubscribe links
+      if (
+        href.startsWith('mailto:') ||
+        href.startsWith('#') ||
+        href.includes('/email/unsubscribe/') ||
+        href.includes('/email/dnc/')
+      ) {
+        return match;
+      }
+      const linkId = `link-${linkIndex++}`;
+      const encodedUrl = encodeURIComponent(href);
+      const trackingUrl = `${TRACKING_BASE_URL}/tracking/click/${trackingId}/${linkId}?url=${encodedUrl}`;
+      return `<a ${before}href="${trackingUrl}"${after}>`;
+    },
+  );
+}
+
+/**
  * Send a single email with full tracking.
  *
  * @param {Object} options
@@ -122,14 +149,17 @@ async function sendEmail({ to, subject, text, html, profile = 'director', queueI
   const trackingId = uuidv4();
 
   // 3. Append tracking pixel to HTML body
-  const htmlWithTracking = html
+  const htmlWithPixel = html
     ? `${html}\n${trackingPixelTag(trackingId)}`
     : `<p>${text || ''}</p>\n${trackingPixelTag(trackingId)}`;
 
-  // 4. Build transport
+  // 4. Wrap links for click tracking
+  const htmlWithTracking = wrapLinksForTracking(htmlWithPixel, trackingId);
+
+  // 5. Build transport
   const transport = await createTransport(profile);
 
-  // 5. Resolve sender identity
+  // 6. Resolve sender identity
   let fromAddress;
   if (process.env.EMAIL_TRANSPORT === 'duocircle') {
     const profileMap = {
@@ -144,7 +174,7 @@ async function sendEmail({ to, subject, text, html, profile = 'director', queueI
     fromAddress = `${creds.senderName} <${creds.senderEmail}>`;
   }
 
-  // 6. Compose mail with unsubscribe headers
+  // 7. Compose mail with unsubscribe headers
   const mailOptions = {
     from: fromAddress,
     to,
@@ -154,10 +184,10 @@ async function sendEmail({ to, subject, text, html, profile = 'director', queueI
     headers: unsubscribeHeaders(to, trackingId),
   };
 
-  // 7. Send
+  // 8. Send
   const result = await transport.sendMail(mailOptions);
 
-  // 8. Record delivery in Firebase
+  // 9. Record delivery in Firebase
   const transportType = process.env.EMAIL_TRANSPORT || 'gmail';
   await db.recordDelivery({
     trackingId,
@@ -171,7 +201,7 @@ async function sendEmail({ to, subject, text, html, profile = 'director', queueI
     queueId: queueId || null,
   });
 
-  // 9. Update queue item if applicable
+  // 10. Update queue item if applicable
   if (queueId) {
     await db.updateQueueItem(queueId, {
       status: 'sent',

@@ -27,6 +27,13 @@
         ".indexOn": ["openedAt"]
       }
     },
+    "clicks": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$trackingId": {
+        ".indexOn": ["clickedAt"]
+      }
+    },
     "suppressions": {
       ".read": "auth != null",
       ".write": "auth != null",
