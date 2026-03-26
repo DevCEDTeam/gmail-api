@@ -33,14 +33,19 @@ No test suite or linter is configured. `npm test` exits with an error.
 ```
 gmail-api/
 ├── app.js                     # Combined entry point (all services)
-├── .env.example               # Environment variable template
+├── .env.example               # Environment variable template (85 lines, 9 sections)
 ├── Dockerfile                 # Cloud Run image (node:20-alpine)
 ├── firebase.json              # Firebase CLI config (rules + functions paths)
 ├── database.rules.json        # Firebase RTDB security rules & indexes
 ├── package.json               # Dependencies + npm scripts
+├── MAUTIC-7X-REVIEW.md        # Mautic 7.x compatibility analysis & integration notes
+├── GCP-INSTALL.md             # Complete 12-step deployment guide with folder annotations
+├── SETUP.md                   # Basic single-profile OAuth2 quickstart
 │
 ├── functions/
 │   └── index.js               # Cloud Functions: processEmailQueue + weeklyReport
+│                               # (firebase-functions dependency required — run npm init + npm install
+│                               #  inside functions/ before deploying)
 │
 └── src/
     ├── config/
@@ -55,9 +60,58 @@ gmail-api/
     │   └── server.js          # Express: /mailer/callback, /tracking/open/:id, /email/unsubscribe/:id, /email/dnc/:id
     ├── queue/
     │   └── worker.js          # Processes /queue items with concurrency control
-    └── reports/
-        └── generate.js        # Weekly digest email with metric grading
+    ├── reports/
+    │   └── generate.js        # Weekly digest email with metric grading
+    └── middleware/             # Reserved — currently empty
 ```
+
+## Module Dependency Graph
+
+```
+app.js
+├── src/config/firebase.js        → initFirebase()
+├── src/relay/server.js            → Express app (exported)
+├── src/webhooks/server.js         → Express app (exported)
+└── src/queue/worker.js            → processOnce(), onQueueWrite()
+
+src/relay/server.js
+├── src/services/email.js          → sendEmail(), sendBulk()
+├── src/services/database.js       → enqueueEmail(), getStats()
+└── src/config/firebase.js         → initFirebase()
+
+src/webhooks/server.js
+├── src/services/database.js       → recordOpen(), recordBounce(), recordSpam(), addSuppression()
+├── src/services/email.js          → TRACKING_PIXEL (Buffer)
+└── src/config/firebase.js         → getDatabase() [dynamic require in unsubscribe/dnc handlers]
+
+src/services/email.js
+├── src/config/credentials.js      → getOAuthClient(), getDuoCirclePassword()
+└── src/services/database.js       → isSuppressed(), recordDelivery(), updateQueueItem()
+
+src/services/database.js
+└── src/config/firebase.js         → getDatabase()
+
+src/config/credentials.js
+├── googleapis                     → google.auth.OAuth2
+└── @google-cloud/secret-manager   → SecretManagerServiceClient [optional]
+
+src/queue/worker.js
+├── src/config/firebase.js         → initFirebase(), getDatabase()
+├── src/services/email.js          → sendEmail()
+└── src/services/database.js       → updateQueueItem(), getPendingEmails()
+
+src/reports/generate.js
+├── src/config/firebase.js         → initFirebase()
+├── src/services/email.js          → sendEmail()
+└── src/services/database.js       → getStats()
+
+functions/index.js
+├── firebase-functions             → database trigger, pubsub schedule
+├── firebase-admin                 → separate init (not shared with src/)
+└── src/queue/worker.js            → processQueueItem()
+```
+
+No circular dependencies exist. Config modules are leaf dependencies; services layer sits in the middle; server modules are top-level consumers.
 
 ## Key Concepts
 
@@ -75,6 +129,8 @@ Each profile needs: `{PREFIX}CLIENT_ID`, `{PREFIX}CLIENT_SECRET`, `{PREFIX}REFRE
 
 Select via `profile` parameter in API requests (defaults to `director`).
 
+OAuth2 clients are cached in a `Map` (`clientCache`) so tokens are reused across calls within the same process.
+
 ### Secret Manager vs Environment Variables
 
 `src/config/credentials.js` resolves credentials in this order:
@@ -89,6 +145,8 @@ Secret IDs follow the pattern: `oauth-secret-client{1,2,3}`, `oauth-refresh-{gen
 - `gmail` (default) — Gmail OAuth2 via googleapis + nodemailer
 - `duocircle` — DuoCircle SMTP relay for high-volume sends
 
+Both transports share the same `sendEmail()` pipeline, so tracking, suppression checks, and delivery recording work identically regardless of transport.
+
 ### Firebase RTDB Collections
 
 Managed by `src/services/database.js`. Rules in `database.rules.json`.
@@ -102,7 +160,21 @@ Managed by `src/services/database.js`. Rules in `database.rules.json`.
 | `/opens` | Open tracking events | trackingId/{pushKey}/openedAt |
 | `/suppressions` | DNC list | email, reason, suppressedAt |
 
-Suppression keys are base64-encoded emails with special chars replaced.
+Suppression keys are base64-encoded emails with special chars replaced (`[.#$/[\]]` → `_`).
+
+### Queue Item Status Lifecycle
+
+```
+pending → processing → sent
+                     → skipped_suppressed
+                     → failed (with error message)
+```
+
+- `pending`: created by `/relay/queue` endpoint via `db.enqueueEmail()`
+- `processing`: set at start of `processQueueItem()` in worker
+- `sent`: set after successful `sendEmail()` (includes trackingId + sentAt)
+- `skipped_suppressed`: set when recipient is on DNC list
+- `failed`: set on error (includes error message + failedAt timestamp)
 
 ### Email Send Pipeline
 
@@ -111,10 +183,11 @@ Every send in `src/services/email.js` follows this flow:
 2. Generate UUID tracking ID
 3. Append 1x1 tracking pixel to HTML
 4. Build transport (Gmail or DuoCircle)
-5. Add List-Unsubscribe headers (RFC 8058)
-6. Send via nodemailer
-7. Record delivery in Firebase
-8. Update queue item status (if queued)
+5. Resolve sender identity (from address + display name)
+6. Add List-Unsubscribe headers (RFC 8058)
+7. Send via nodemailer
+8. Record delivery in Firebase
+9. Update queue item status (if queued)
 
 ### Webhook Event Types
 
@@ -123,6 +196,8 @@ Every send in `src/services/email.js` follows this flow:
 - `soft_bounce` — adds to DNC after 5 occurrences (`SOFT_BOUNCE_THRESHOLD`)
 - `spam`, `complaint`, `spam_complaint` — adds to DNC immediately
 - `unsubscribe`, `unsub` — adds to DNC
+
+The callback endpoint accepts both single events and arrays of events.
 
 ## API Endpoints
 
@@ -147,6 +222,22 @@ POST /email/unsubscribe/:trackingId → Process unsubscribe (RFC 8058 one-click)
 GET  /email/dnc/:trackingId         → Full DNC opt-out
 ```
 
+## Environment Variables Reference
+
+All variables are defined in `.env.example` (copy to `.env` for local dev):
+
+| Group | Variables | Notes |
+|-------|-----------|-------|
+| GCP | `GCP_PROJECT_ID`, `USE_SECRET_MANAGER` | `USE_SECRET_MANAGER=false` for local dev |
+| OAuth2 (x3 profiles) | `{PREFIX}_CLIENT_ID`, `{PREFIX}_CLIENT_SECRET`, `{PREFIX}_REFRESH_TOKEN`, `{PREFIX}_SENDER_EMAIL`, `{PREFIX}_SENDER_NAME` | Prefixes: `GENERAL_`, `DIRECTOR_`, `TEAM_` |
+| OAuth2 shared | `REDIRECT_URI` | Default: `https://developers.google.com/oauthplayground` |
+| Firebase | `FIREBASE_DATABASE_URL`, `GOOGLE_APPLICATION_CREDENTIALS` | Credentials path only needed for local dev |
+| Mautic / Tracking | `MAUTIC_BASE_URL`, `TRACKING_BASE_URL`, `DOMAIN` | Base URLs for unsubscribe links and tracking pixels |
+| DuoCircle | `EMAIL_TRANSPORT`, `DUOCIRCLE_HOST`, `DUOCIRCLE_PORT`, `DUOCIRCLE_USER`, `DUOCIRCLE_PASS`, `DUOCIRCLE_SECURE` | Set `EMAIL_TRANSPORT=duocircle` to activate |
+| Ports | `RELAY_PORT`, `WEBHOOK_PORT` | Default: 3000, 3001 |
+| Queue | `QUEUE_CONCURRENCY` | Default: 5 |
+| Reports | `REPORT_RECIPIENT` | Default: `director@cfored.com` |
+
 ## Dependencies
 
 | Package | Purpose |
@@ -159,7 +250,7 @@ GET  /email/dnc/:trackingId         → Full DNC opt-out
 | `dotenv` | Local .env file loading |
 | `uuid` | Tracking ID generation (v4) |
 
-Cloud Functions additionally use `firebase-functions` (installed separately in `functions/`).
+Cloud Functions require `firebase-functions` and `firebase-admin` — install inside `functions/` directory before deploying (`cd functions && npm init -y && npm install firebase-functions firebase-admin`).
 
 ## Conventions and Patterns
 
@@ -175,6 +266,7 @@ Cloud Functions additionally use `firebase-functions` (installed separately in `
 - **Status-based recovery**: Queue items get `failed` status with error message for investigation
 - **Suppression returns**: Suppressed sends return `{skipped: true, reason: "suppressed"}` instead of throwing
 - **Early validation**: Missing required fields return 400 before processing
+- **Credential fail-fast**: Missing OAuth2 credentials throw descriptive errors listing which env vars are missing
 
 ### Naming
 - Services use domain metaphors: "Blue Truck" (relay), "Orange Airplane" (queue worker)
@@ -183,7 +275,8 @@ Cloud Functions additionally use `firebase-functions` (installed separately in `
 - Firebase singleton uses `initialised` flag (British spelling)
 
 ### Security
-- `.env` and `service-account-key.json` are in `.gitignore` — never commit secrets
+- `.env` is in `.gitignore` — never commit secrets
+- `service-account-key.json` should never be committed (add to `.gitignore` if working with one locally)
 - Client Secrets and Refresh Tokens go in Secret Manager for production
 - Client IDs are safe to put in Cloud Run env vars (not secrets)
 - Suppression keys are base64-encoded to avoid Firebase path-unsafe characters
@@ -210,6 +303,7 @@ gcloud run deploy gmail-relay --image gcr.io/gmail-bulk-sending-389112/gmail-rel
 
 ### Cloud Functions (worker + report)
 ```bash
+cd functions && npm init -y && npm install firebase-functions firebase-admin && cd ..
 firebase deploy --only functions
 ```
 
@@ -218,7 +312,15 @@ firebase deploy --only functions
 firebase deploy --only database
 ```
 
-See `GCP-INSTALL.md` for the complete 12-step deployment guide with all commands and configurations.
+See `GCP-INSTALL.md` for the complete 12-step deployment guide with folder-to-step mapping, all commands, and configurations.
+
+## Related Documentation
+
+| File | Purpose |
+|------|---------|
+| `GCP-INSTALL.md` | Complete 12-step GCP deployment guide with project folder annotations |
+| `SETUP.md` | Quick single-profile OAuth2 setup (good for first-time dev onboarding) |
+| `MAUTIC-7X-REVIEW.md` | Analysis of Mautic 7.x (Columba, Jan 2026) — integration opportunities, bounce handling improvements, and recommendations for this project |
 
 ## Common Tasks
 
