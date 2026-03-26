@@ -13,6 +13,161 @@ Step-by-step deployment on Google Cloud Platform.
 
 ---
 
+## Project Folder Structure
+
+Every file in this repo has a specific role. The tree below shows what each file does and which installation step uses it.
+
+```
+gmail-api/
+│
+│── app.js                          # Main entry point — starts all 3 services locally
+│                                   #   Blue Truck + Webhooks + Orange Airplane
+│                                   #   Usage: npm start  |  node app.js
+│                                   #   Used in: Step 6 (Cloud Run), Step 11 (GCE VM)
+│
+│── .env.example                    # Template for all environment variables
+│                                   #   Copy to .env and fill in your values
+│                                   #   Used in: Step 5 (env config), Step 11 (VM setup)
+│
+│── Dockerfile                      # Docker image for Cloud Run deployment
+│                                   #   Runs app.js inside node:20-alpine
+│                                   #   Used in: Step 6a (build & push image)
+│
+│── package.json                    # Node.js project manifest — defines npm scripts:
+│                                   #   npm start     → node app.js       (all services)
+│                                   #   npm run relay → node src/relay/server.js
+│                                   #   npm run worker → node src/queue/worker.js
+│                                   #   npm run webhooks → node src/webhooks/server.js
+│                                   #   npm run report → node src/reports/generate.js
+│
+│── firebase.json                   # Firebase project config — tells Firebase CLI where to find:
+│                                   #   database rules  → database.rules.json
+│                                   #   cloud functions → functions/ directory
+│                                   #   Used in: Step 4b (deploy rules), Step 5b (deploy functions)
+│
+│── database.rules.json             # Firebase RTDB security rules + indexes
+│                                   #   Defines read/write auth and indexes for:
+│                                   #   /queue, /deliveries, /bounces, /spam, /opens, /suppressions
+│                                   #   Used in: Step 4b (firebase deploy --only database)
+│
+│── functions/
+│   └── index.js                    # Cloud Functions entry point — "Orange Airplane"
+│                                   #   processEmailQueue: triggered on /queue writes
+│                                   #   weeklyReport: scheduled every Monday 9 AM CST
+│                                   #   Used in: Step 5b (firebase deploy --only functions)
+│
+│── src/
+│   │── config/
+│   │   │── credentials.js          # Multi-profile OAuth2 credential manager
+│   │   │                           #   3 profiles: general, director, team
+│   │   │                           #   Loads secrets from Secret Manager (prod) or env vars (dev)
+│   │   │                           #   Secret IDs: oauth-secret-client{1,2,3}, oauth-refresh-{general,director,team}
+│   │   │                           #   Used in: Step 2 (create OAuth clients), Step 3 (store secrets)
+│   │   │
+│   │   └── firebase.js             # Firebase Admin SDK initialisation
+│   │                               #   Uses Application Default Credentials in GCP
+│   │                               #   Locally: set GOOGLE_APPLICATION_CREDENTIALS env var
+│   │                               #   Used in: Step 4 (Firebase setup)
+│   │
+│   │── services/
+│   │   │── email.js                # Core email sending service with full tracking
+│   │   │                           #   - Open tracking pixel injection (1x1 GIF)
+│   │   │                           #   - List-Unsubscribe headers (RFC 8058)
+│   │   │                           #   - Suppression list check before every send
+│   │   │                           #   - Delivery recording to Firebase
+│   │   │                           #   - Gmail OAuth2 or DuoCircle SMTP transport
+│   │   │                           #   Used in: Step 2 (OAuth), Step 10 (DuoCircle)
+│   │   │
+│   │   └── database.js             # Firebase RTDB data-access layer
+│   │                               #   CRUD for: /queue, /deliveries, /bounces,
+│   │                               #   /spam, /opens, /suppressions
+│   │                               #   Used in: Step 4 (Firebase RTDB setup)
+│   │
+│   │── relay/
+│   │   └── server.js               # "Blue Truck" HTTP relay server (Express)
+│   │                               #   POST /relay/send    — single email
+│   │                               #   POST /relay/bulk    — bulk email
+│   │                               #   POST /relay/queue   — async queue
+│   │                               #   GET  /relay/stats   — delivery stats
+│   │                               #   GET  /health        — health check
+│   │                               #   Used in: Step 6b (Cloud Run deploy), Step 9 (cPanel integration)
+│   │
+│   │── webhooks/
+│   │   └── server.js               # Webhook + tracking server (Express)
+│   │                               #   POST /mailer/callback       — Mautic/ESP bounce & spam
+│   │                               #   GET  /tracking/open/:id     — open-tracking pixel
+│   │                               #   GET  /email/unsubscribe/:id — unsubscribe page
+│   │                               #   GET  /email/dnc/:id         — full do-not-contact
+│   │                               #   Used in: Step 6c (webhook Cloud Run), Step 7 (Mautic config)
+│   │
+│   │── queue/
+│   │   └── worker.js               # "Orange Airplane" queue processor
+│   │                               #   Watches Firebase /queue for pending email jobs
+│   │                               #   Can run standalone (npm run worker) or as Cloud Function
+│   │                               #   Supports --once flag for one-shot processing
+│   │                               #   Used in: Step 5 (Cloud Functions deploy)
+│   │
+│   └── reports/
+│       └── generate.js             # Weekly report generator — "Report Card"
+│                                   #   Aggregates opens, bounces, spam, unsubscribes
+│                                   #   Sends HTML report email to REPORT_RECIPIENT
+│                                   #   Used in: Step 5 (Cloud Function schedule), Step 11 (cron)
+│
+│── .gitignore                      # Excludes .env, node_modules, service-account-key.json
+└── .dockerignore                   # Excludes node_modules from Docker builds
+```
+
+### How files connect (data flow)
+
+```
+.env.example ──→ .env (your secrets)
+                   │
+                   ▼
+              src/config/credentials.js ──→ loads OAuth2 tokens
+              src/config/firebase.js    ──→ connects to Firebase RTDB
+                   │
+         ┌─────────┴──────────┐
+         ▼                    ▼
+  src/services/email.js    src/services/database.js
+  (send via Gmail/DuoCircle)   (read/write Firebase)
+         │                    │
+    ┌────┴────┐          ┌────┴────┐
+    ▼         ▼          ▼         ▼
+src/relay/  src/queue/  src/webhooks/  src/reports/
+server.js   worker.js   server.js      generate.js
+(Blue Truck) (Orange     (Tracking     (Weekly
+  HTTP API)  Airplane)    + Callbacks)  Report Card)
+         │         │          │
+         └────┬────┘          │
+              ▼               ▼
+           app.js          functions/index.js
+        (local dev —       (Cloud Functions —
+         all-in-one)        production triggers)
+              │
+              ▼
+          Dockerfile
+       (Cloud Run image)
+```
+
+### Which files matter at each step
+
+| Step | Files Involved |
+|---|---|
+| Step 1: GCP Project Setup | *(GCP Console only — no project files)* |
+| Step 2: OAuth2 Clients | `src/config/credentials.js` — reads the Client IDs, Secrets, Refresh Tokens |
+| Step 3: Secret Manager | `src/config/credentials.js` — `loadFromSecretManager()` loads secrets by ID |
+| Step 4: Firebase RTDB | `firebase.json`, `database.rules.json`, `src/config/firebase.js`, `src/services/database.js` |
+| Step 5: Cloud Functions | `functions/index.js`, `src/queue/worker.js`, `src/reports/generate.js` |
+| Step 6: Cloud Run | `Dockerfile`, `app.js`, `src/relay/server.js`, `src/webhooks/server.js` |
+| Step 7: Mautic Webhooks | `src/webhooks/server.js` — `/mailer/callback` endpoint |
+| Step 8: DNS Tracking | `src/services/email.js` — uses `TRACKING_BASE_URL` for pixel URLs |
+| Step 9: cPanel Integration | `src/relay/server.js` — `/relay/send`, `/relay/bulk`, `/relay/queue` |
+| Step 10: DuoCircle | `src/services/email.js` — `createDuoCircleTransport()`, `src/config/credentials.js` — `getDuoCirclePassword()` |
+| Step 11: GCE VM | `app.js`, `.env.example` → `.env`, `package.json` (npm scripts) |
+| Step 12: Verify | `src/relay/server.js` (`/health`), `src/webhooks/server.js` (`/tracking/open/:id`) |
+
+---
+
 ## Step 1: GCP Project Setup
 
 ```bash
