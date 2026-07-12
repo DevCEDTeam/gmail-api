@@ -1,6 +1,6 @@
 # Gmail API Setup Guide
 
-Step-by-step instructions to configure OAuth2 credentials for the **gmail-bulk-sending** GCP project (`gmail-bulk-sending-389112`).
+Step-by-step instructions to configure OAuth2 credentials for the **gmail-bulk-sending** GCP project (ID: `gmail-bulk-sending-389112`, number: `895054114655`).
 
 ---
 

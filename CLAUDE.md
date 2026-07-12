@@ -22,7 +22,7 @@ firebase deploy --only functions
 
 ## Architecture
 
-Gmail Bulk Sending System (v2.0.0) — a Node.js email relay with full tracking (bounces, opens, clicks, spam, unsubscribes) via Gmail OAuth2 or DuoCircle SMTP, with Firebase Realtime Database for state. Domain: `cfored.com`. GCP Project: `gmail-bulk-sending-389112`.
+Gmail Bulk Sending System (v2.0.0) — a Node.js email relay with full tracking (bounces, opens, clicks, spam, unsubscribes) via Gmail OAuth2 or DuoCircle SMTP, with Firebase Realtime Database for state. Domain: `cfored.com`. GCP Project: `gmail-bulk-sending-389112` (number: `895054114655`).
 
 ### Three Independent Services
 

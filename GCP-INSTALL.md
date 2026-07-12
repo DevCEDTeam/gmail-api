@@ -171,7 +171,10 @@ server.js   worker.js   server.js      generate.js
 ## Step 1: GCP Project Setup
 
 ```bash
-# Set your project ID
+# Project details:
+#   Name:   gmail-bulk-sending
+#   Number: 895054114655
+#   ID:     gmail-bulk-sending-389112
 export PROJECT_ID="gmail-bulk-sending-389112"
 
 # Authenticate
