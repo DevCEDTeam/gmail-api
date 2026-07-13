@@ -102,4 +102,4 @@ Accepts single event or array. Switch on `type`: `bounce`/`hard_bounce` → imme
 - **Cloud Run**: `Dockerfile` (node:20-alpine) for relay + webhooks
 - **Cloud Functions**: `functions/index.js` for queue worker + weekly report schedule
 - **Firebase Rules**: `firebase deploy --only database` deploys `database.rules.json`
-- See `GCP-INSTALL.md` for the full 12-step guide; `SETUP.md` for single-profile OAuth2 quickstart
+- See `GCP-INSTALL.md` for the full 12-step guide; `SETUP.md` for single-profile OAuth2 quickstart; `MAINTENANCE.md` for the operational runbook (credential rotation, queue recovery, data pruning)
