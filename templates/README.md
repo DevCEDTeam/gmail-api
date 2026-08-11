@@ -23,7 +23,7 @@ Why NDA-first is the right sequence:
 - It contains no offering details, so a first touch to a non-US firm does not
   trip the "no materials to non-US persons before NDA" rule
 - It filters for genuine interest before anything substantive leaves NCC
-- It matches the message already sent to Capital Intellect and Spike Capital,
+- It matches the message already sent to the first two contacted firms,
   keeping all outreach consistent
 
 ## ⚠ COMPLIANCE GATES — DO NOT SEND UNTIL ALL PASS
@@ -60,9 +60,9 @@ Stage 4  TRIAGE           ├─ Interested, will sign  → counsel sends NDA (S
          (all via counsel)│                           (litigation-finance-outreach)
                           └─ No response in 10-14d  → one follow-up nudge, then close
    │
-Stage 5  FOLLOW-UP        Capital Intellect + Spike Capital: one short follow-up
-                          referencing the original NDA request (counsel-approved
-                          wording), then mark unresponsive and move on.
+Stage 5  FOLLOW-UP        Previously contacted firms (see Outreach Log): one short
+                          follow-up referencing the original NDA request (counsel-
+                          approved wording), then mark unresponsive and move on.
    │
 Stage 6  NDA EXECUTED     Counsel delivers PPM, form of subscription, case dossiers.
                           506(c) accreditation verification (CPA/attorney letter or
@@ -75,10 +75,13 @@ Stage 7  RECORD           /relay/stats for open+click engagement per wave;
 
 ## Outreach Log
 
-| Firm | First Touch | Status | Next Action |
+Tracked outside the repo — keep counterparty names and correspondence out of
+committed files. Slots below are anonymous placeholders only.
+
+| Slot | First Touch | Status | Next Action |
 |------|------------|--------|-------------|
-| Capital Intellect | pre-8/2026 (NDA request) | No response | Counsel-approved follow-up, then close if silent |
-| Spike Capital | pre-8/2026 (NDA request) | No response | Counsel-approved follow-up, then close if silent |
+| Firm A | pre-8/2026 (NDA request) | No response | Counsel-approved follow-up, then close if silent |
+| Firm B | pre-8/2026 (NDA request) | No response | Counsel-approved follow-up, then close if silent |
 | — remaining list — | — | Blocked | Pending counsel template approval + list verification |
 
 ## List Hygiene — 8/10/2026 CSV
