@@ -14,10 +14,17 @@ headers; suppression is checked before every send).
 | **1 — Primary** | `nda-first-outreach.{html,txt}` | First contact with every firm | NDA inquiry only — **no terms, no amounts, no documents** |
 | **2 — On request** | `litigation-finance-outreach.{html,txt}` | Only if a firm asks for context before signing the NDA | Non-confidential Preliminary Summary terms (Venture_III framing) |
 
-The NDA-first template is Harold R. Huggins' proposed text as submitted to securities
-counsel for review (August 2026). **Its body paragraphs are verbatim from that draft —
-do not reword without counsel sign-off.** The disclaimer footer is marked as a
-recommended addition pending counsel approval.
+The NDA-first template is Harold R. Huggins' text as **reviewed by securities counsel
+(August 2026): "generally appropriate"** with two directives, both already satisfied
+by the template body:
+- The "structured to rely on … Regulation D … and, where appropriate, Regulation S"
+  phrasing stands — never represent an exemption as established fact, and never
+  characterize recipient firms with a "(Reg. D)" parenthetical in any correspondence
+- First touch stays limited to the NDA and general introductory matters — no
+  offering, litigation, or confidential materials before an executed NDA
+
+**Do not reword the body without counsel sign-off.** The disclaimer footer is
+retained as best practice, consistent with counsel's guidance.
 
 Why NDA-first is the right sequence:
 - It contains no offering details, so a first touch to a non-US firm does not
@@ -28,9 +35,13 @@ Why NDA-first is the right sequence:
 
 ## ⚠ COMPLIANCE GATES — DO NOT SEND UNTIL ALL PASS
 
-1. **Counsel approval of the template text** — the NDA-first draft is under review
-   now; do not send until counsel signs off
-2. **Counsel review of every response** before replying (Harold's standing commitment)
+1. **Counsel approval of the template text** — ✅ CLEARED (Aug 2026): approved with
+   guidance; never use a "(Reg. D)" parenthetical when characterizing recipient firms
+2. **Counsel engagement model (fee compromise, pending counsel concurrence)** —
+   Harold sends the approved template without per-message or list review; counsel is
+   engaged when a recipient agrees to proceed with an NDA (NDA prep + all post-NDA
+   disclosures, under a separate milestone/hourly arrangement). Any response raising
+   a legal question before the NDA stage is held for counsel before replying
 3. **Recipient verification** — each contact must be an actual litigation finance /
    legal-asset investment firm with a named investment or origination contact.
    **The 8/10/2026 CSV (72 firms) fails this check — see List Hygiene below**
@@ -49,15 +60,18 @@ Stage 1  VERIFY LIST      Replace/clean the CSV: actual litigation funders only,
                           offshore firms second wave (NDA-first covers them, but
                           sequencing US-first is cleaner while counsel confirms).
    │
-Stage 2  COUNSEL GATE     Counsel approves NDA-first template text (in progress).
+Stage 2  COUNSEL GATE     ✅ Template approved (Aug 2026, with guidance). Fee
+                          compromise proposed: no per-send review; counsel joins
+                          at the NDA stage under separate terms.
    │
 Stage 3  FIRST TOUCH      Send nda-first-outreach via /relay/send, profile
                           "director", one merge-personalized send per contact.
                           Opens/clicks tracked automatically per recipient.
    │
-Stage 4  TRIAGE           ├─ Interested, will sign  → counsel sends NDA (Stage 6)
+Stage 4  TRIAGE           ├─ Willing to sign NDA    → ENGAGE COUNSEL (Stage 6)
          RESPONSES        ├─ Wants context first    → send Preliminary Summary
-         (all via counsel)│                           (litigation-finance-outreach)
+         (legal questions │                           (litigation-finance-outreach)
+          held for counsel)
                           └─ No response in 10-14d  → one follow-up nudge, then close
    │
 Stage 5  FOLLOW-UP        Previously contacted firms (see Outreach Log): one short
