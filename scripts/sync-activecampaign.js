@@ -17,7 +17,10 @@
  * .env (gitignored):
  *   AC_API_URL=https://youraccount.api-us1.com
  *   AC_API_KEY=xxx
- *   AC_LIST_ID=1            # optional — AC list to subscribe contacts to
+ *   AC_LIST_ID=1                       # optional — AC list to subscribe contacts to
+ *   AC_PIPELINE=Litigation Finance     # optional — create a deal per contact in
+ *   AC_STAGE=To Contact                #   this pipeline/stage (looked up by title)
+ *   AC_DEAL_OWNER=1                    # optional — deal owner user id (default 1)
  */
 
 require('dotenv').config();
@@ -82,6 +85,26 @@ async function ensureTag(name) {
   return created.tag.id;
 }
 
+/**
+ * Resolve pipeline (dealGroup) + stage ids by title from .env AC_PIPELINE/AC_STAGE.
+ * Returns null when not configured — deal creation is then skipped.
+ */
+async function resolveDealStage() {
+  const pipelineTitle = process.env.AC_PIPELINE;
+  const stageTitle = process.env.AC_STAGE || 'To Contact';
+  if (!pipelineTitle) return null;
+
+  const groups = await ac('GET', 'dealGroups?limit=100');
+  const group = (groups.dealGroups || []).find((g) => g.title === pipelineTitle);
+  if (!group) throw new Error(`Pipeline "${pipelineTitle}" not found in AC`);
+
+  const stages = await ac('GET', `dealStages?filters[d_groupid]=${group.id}&limit=100`);
+  const stage = (stages.dealStages || []).find((s) => s.title === stageTitle);
+  if (!stage) throw new Error(`Stage "${stageTitle}" not found in pipeline "${pipelineTitle}"`);
+
+  return { groupId: group.id, stageId: stage.id, currency: group.currency || 'usd' };
+}
+
 async function main() {
   if (!fs.existsSync(IN_FILE)) {
     console.error(`[ac-sync] Input not found: ${IN_FILE} — run validate-list.js first.`);
@@ -122,6 +145,8 @@ async function main() {
 
   const tagId = await ensureTag(TAG);
   const pendingTagId = await ensureTag(PENDING_TAG);
+  const dealStage = await resolveDealStage();
+  if (dealStage) console.log(`[ac-sync] Deals enabled → pipeline "${process.env.AC_PIPELINE}", stage "${process.env.AC_STAGE || 'To Contact'}"`);
 
   let synced = 0;
   for (const c of ready) {
@@ -133,12 +158,26 @@ async function main() {
     if (AC_LIST_ID) {
       await ac('POST', 'contactLists', { contactList: { list: AC_LIST_ID, contact: contact.id, status: 1 } });
     }
+    if (dealStage) {
+      await ac('POST', 'deals', {
+        deal: {
+          title: c.firm || c.email,
+          contact: contact.id,
+          group: dealStage.groupId,
+          stage: dealStage.stageId,
+          owner: process.env.AC_DEAL_OWNER || '1',
+          value: 0,
+          currency: dealStage.currency,
+          status: 0,
+        },
+      });
+    }
     synced++;
-    console.log(`[ac-sync] ✓ ${c.firm} <${c.email}>`);
+    console.log(`[ac-sync] ✓ ${c.firm} <${c.email}>${dealStage ? ' +deal' : ''}`);
     await sleep(THROTTLE_MS);
   }
 
-  console.log(`[ac-sync] Done — ${synced} contacts synced, tagged ${TAG} + ${PENDING_TAG}.`);
+  console.log(`[ac-sync] Done — ${synced} contacts synced, tagged ${TAG} + ${PENDING_TAG}${dealStage ? ', deals created in To Contact' : ''}.`);
   console.log('[ac-sync] Next: build the campaign in the AC UI from templates/nda-first-outreach.html.');
   console.log('[ac-sync] SEND ONLY after counsel approves the template. The send button stays human.');
 }
