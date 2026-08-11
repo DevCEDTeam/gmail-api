@@ -14,17 +14,17 @@ headers; suppression is checked before every send).
 | **1 — Primary** | `nda-first-outreach.{html,txt}` | First contact with every firm | NDA inquiry only — **no terms, no amounts, no documents** |
 | **2 — On request** | `litigation-finance-outreach.{html,txt}` | Only if a firm asks for context before signing the NDA | Non-confidential Preliminary Summary terms (Venture_III framing) |
 
-The NDA-first template is Harold R. Huggins' text as **reviewed by securities counsel
-(August 2026): "generally appropriate"** with two directives, both already satisfied
-by the template body:
-- The "structured to rely on … Regulation D … and, where appropriate, Regulation S"
-  phrasing stands — never represent an exemption as established fact, and never
+The NDA-first template is the **authorized final version** (template.docx,
+Aug 11 2026), mirrored here verbatim: counsel-approved body, official CED signature
+block (full address, phone x1, fax, web), CED confidentiality notice, and the
+not-an-offer disclaimer. Counsel's standing directives:
+- Never represent an exemption as established fact — the "structured to rely on …
+  Regulation D … and, where appropriate, Regulation S" phrasing stands; never
   characterize recipient firms with a "(Reg. D)" parenthetical in any correspondence
 - First touch stays limited to the NDA and general introductory matters — no
   offering, litigation, or confidential materials before an executed NDA
 
-**Do not reword the body without counsel sign-off.** The disclaimer footer is
-retained as best practice, consistent with counsel's guidance.
+**Do not reword any part of the template without counsel sign-off.**
 
 Why NDA-first is the right sequence:
 - It contains no offering details, so a first touch to a non-US firm does not
@@ -35,13 +35,15 @@ Why NDA-first is the right sequence:
 
 ## ⚠ COMPLIANCE GATES — DO NOT SEND UNTIL ALL PASS
 
-1. **Counsel approval of the template text** — ✅ CLEARED (Aug 2026): approved with
-   guidance; never use a "(Reg. D)" parenthetical when characterizing recipient firms
-2. **Counsel engagement model (fee compromise, pending counsel concurrence)** —
-   Harold sends the approved template without per-message or list review; counsel is
-   engaged when a recipient agrees to proceed with an NDA (NDA prep + all post-NDA
-   disclosures, under a separate milestone/hourly arrangement). Any response raising
-   a legal question before the NDA stage is held for counsel before replying
+1. **Counsel approval of the template text** — ✅ CLEARED (Aug 2026): approved;
+   authorized final version received as template.docx (Aug 11, 2026) and mirrored
+   in `nda-first-outreach.{html,txt}` verbatim. Never use a "(Reg. D)" parenthetical
+   when characterizing recipient firms in any correspondence
+2. **Counsel engagement model** — ✅ CONFIRMED by counsel (Aug 11, 2026): Harold
+   proceeds with initial outreach independently using the revised template; counsel
+   engaged when a recipient is prepared to proceed with an NDA, or if a substantive
+   legal issue arises before that stage — separate hourly arrangement at $200/hr
+   covering NDA preparation/negotiation and subsequent securities-law advice
 3. **Recipient verification** — each contact must be an actual litigation finance /
    legal-asset investment firm with a named investment or origination contact.
    **The 8/10/2026 CSV (72 firms) fails this check — see List Hygiene below**
