@@ -13,6 +13,14 @@ structured to rely on an applicable exemption from registration under
 Regulation D for eligible U.S. investors and, where appropriate,
 Regulation S for qualifying offshore transactions.
 
+[OPTIONAL — counsel-permitted BAoHC reference (Aug 13, 2026). Include or
+delete this paragraph as a whole; do not reword. Replace {{BAOHC_URL}}
+with the BAoHC website address before sending.]
+NCC's approach draws on BAoHC, a proposed agentic AI banking standard
+({{BAOHC_URL}}). BAoHC remains a proposal and has not been validated,
+deployed, or adopted by any financial institution.
+[END OPTIONAL]
+
 NCC is represented by securities counsel. At this preliminary stage,
 we would like to limit discussions to the NDA and general introductory
 matters until an executed confidentiality agreement is in place.

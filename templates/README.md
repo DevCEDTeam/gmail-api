@@ -22,7 +22,15 @@ not-an-offer disclaimer. Counsel's standing directives:
   Regulation D … and, where appropriate, Regulation S" phrasing stands; never
   characterize recipient firms with a "(Reg. D)" parenthetical in any correspondence
 - First touch stays limited to the NDA and general introductory matters — no
-  offering, litigation, or confidential materials before an executed NDA
+  offering, litigation, or confidential materials before an executed **mutual** NDA
+- **BAoHC reference permitted (counsel, Aug 13 2026):** the BAoHC website and a
+  description of BAoHC as a **proposed agentic AI banking standard** may be included
+  in initial communications, provided the description remains clearly qualified as
+  proposed and does not suggest BAoHC has been validated, deployed, or adopted by
+  any financial institution. Implemented as a clearly-marked OPTIONAL paragraph in
+  both template files (include or delete whole; fill `{{BAOHC_URL}}` before sending —
+  the sentence wording is drafted to counsel's guardrails but was not itself
+  reviewed verbatim)
 
 **Do not reword any part of the template without counsel sign-off.**
 
